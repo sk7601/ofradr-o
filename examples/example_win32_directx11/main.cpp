@@ -5167,7 +5167,7 @@ void StartBrowserProxyThread() {
             userDataDir = s2ws(appData + "\\ofradr\\browser_data_ProxyDefault");
         }
 
-        SetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", L"--no-sandbox --disable-gpu --disable-gpu-compositing --force-device-scale-factor=1 --disable-features=msWebView2BrowserHitTransparent");
+        SetEnvironmentVariableW(L"WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", L"--no-sandbox --disable-gpu --disable-gpu-compositing --force-device-scale-factor=1 --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=CalculateNativeWinOcclusion,msWebView2BrowserHitTransparent");
         BrowserLog("ProxyThread: Calling CreateCoreWebView2EnvironmentWithOptions...");
         if (!userDataDir.empty()) {
             char narrowDir[512]; WideCharToMultiByte(CP_UTF8, 0, userDataDir.c_str(), -1, narrowDir, sizeof(narrowDir), NULL, NULL);
@@ -5383,10 +5383,25 @@ void StartBrowserProxyThread() {
             if (!g_proxyModeActive) break;
 
             if (g_browserInitialized && pBits && curWidth > 0 && curHeight > 0) {
-                PrintWindow(hProxyWnd, hdcMem, 2);
+                BOOL pwRes = PrintWindow(hProxyWnd, hdcMem, 2);
+                if (!pwRes) {
+                    PrintWindow(hProxyWnd, hdcMem, 0);
+                }
+
                 uint32_t* src = (uint32_t*)pBits;
                 size_t numPixels = (size_t)(curWidth * curHeight);
-                if (localBuf.size() == numPixels) {
+
+                // Sample pixels to verify frame content is valid (not purely black 0x00000000)
+                bool hasContent = false;
+                size_t step = (numPixels > 1000) ? (numPixels / 200) : 1;
+                for (size_t i = 0; i < numPixels; i += step) {
+                    if ((src[i] & 0x00FFFFFF) != 0) {
+                        hasContent = true;
+                        break;
+                    }
+                }
+
+                if (hasContent && localBuf.size() == numPixels) {
                     for (size_t i = 0; i < numPixels; i++) {
                         localBuf[i] = src[i] | 0xFF000000;
                     }
@@ -5396,10 +5411,14 @@ void StartBrowserProxyThread() {
                         memcpy(g_proxyFrameBuffer.data(), localBuf.data(), localBuf.size() * 4);
                     }
                     g_proxyFrameReady = true;
+                } else if (!hasContent) {
+                    // Force redraw if window rendered black/blank content
+                    RedrawWindow(hProxyWnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
                 }
+
                 static int frameCounter = 0;
                 if ((frameCounter++ % 300) == 0) {
-                    BrowserLog("ProxyThread: Captured frame " + std::to_string(frameCounter) + " successfully.");
+                    BrowserLog("ProxyThread: Captured frame " + std::to_string(frameCounter) + " (validContent=" + (hasContent ? "1" : "0") + ")");
                 }
             }
 

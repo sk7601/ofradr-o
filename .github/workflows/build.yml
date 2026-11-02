@@ -1,0 +1,33 @@
+
+name: Build Windows EXE
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore dependencies
+        run: nuget restore examples\imgui_examples.sln -PackagesDirectory examples\packages
+
+      - name: Build Release x64
+        run: msbuild examples\imgui_examples.sln /m /p:Configuration=Release /p:Platform=x64
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-Release
+          path: examples/example_win32_directx11/Release/hope.exe
+          if-no-files-found: error

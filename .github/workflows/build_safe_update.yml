@@ -1,0 +1,139 @@
+name: Build Windows EXE (safe update button)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Replace unsafe update button (temporary build patch)
+        shell: pwsh
+        run: |
+          @'
+          #!/usr/bin/env python3
+          """Replace OfraDR's privileged remote-script updater with a release/build browser hand-off.
+          
+          Use only in a trusted checkout, after reviewing source and changes.
+          Does not install software, run downloads, or alter antivirus settings.
+          """
+          from pathlib import Path
+          import re
+          import sys
+          
+          SOURCE = Path('examples/example_win32_directx11/main.cpp')
+          URL = 'https://github.com/sk7601/ofradr-o/actions'
+          
+          
+          def find_function_end(source: str, start: int) -> int:
+              """Find matching closing brace, skipping C++ comments/strings, including raw strings."""
+              depth = 0
+              i = start
+              n = len(source)
+              while i < n:
+                  if source.startswith('//', i):
+                      next_nl = source.find('\n', i + 2)
+                      i = n if next_nl < 0 else next_nl + 1
+                      continue
+                  if source.startswith('/*', i):
+                      finish = source.find('*/', i + 2)
+                      if finish < 0: raise ValueError('Unclosed block comment')
+                      i = finish + 2
+                      continue
+                  if source.startswith('R"', i):
+                      paren = source.find('(', i + 2)
+                      if paren != -1:
+                          delimiter = source[i+2:paren]
+                          finish = source.find(')' + delimiter + '"', paren+1)
+                          if finish < 0: raise ValueError('Unclosed C++ raw string')
+                          i = finish + len(delimiter) + 2
+                          continue
+                  if source[i] in ('"', "'"):
+                      quote = source[i]
+                      i += 1
+                      while i < n:
+                          if source[i] == '\\':
+                              i += 2
+                          elif source[i] == quote:
+                              i += 1
+                              break
+                          else:
+                              i += 1
+                      continue
+                  if source[i] == '{':
+                      depth += 1
+                  elif source[i] == '}':
+                      depth -= 1
+                      if depth == 0: return i + 1
+                  i += 1
+              raise ValueError('Could not locate end of updater function')
+          
+          
+          def main() -> None:
+              if not SOURCE.is_file():
+                  raise SystemExit('main.cpp not found; run from repository root')
+              code = SOURCE.read_text(encoding='utf-8-sig')
+              if 'OfraDR safe updater handoff' in code:
+                  print('Safe updater patch already present')
+                  return
+              pat = re.compile(
+                  r'(?m)^([ \t]*(?:(?:static|inline)\s+)*(bool|void)\s+LaunchMandatoryUpdateInstaller\s*\(\s*\)\s*(?:noexcept\s*)?\{)'
+              )
+              matches = list(pat.finditer(code))
+              if len(matches) != 1:
+                  raise SystemExit(f'Expected exactly one LaunchMandatoryUpdateInstaller definition, found {len(matches)}. No changes made.')
+              m = matches[0]
+              end = find_function_end(code, m.end()-1)
+              return_statement = '    return false;\n' if m.group(2) == 'bool' else ''
+              replacement = m.group(1) + f'''
+              // OfraDR safe updater handoff: open account-owned build artifacts, no remote script execution.
+              HINSTANCE result = ShellExecuteW(nullptr, L"open", L"{URL}", nullptr, nullptr, SW_SHOWNORMAL);
+              if (reinterpret_cast<INT_PTR>(result) <= 32) {{
+                  MessageBoxW(nullptr,
+                      L"Could not open the GitHub build page. Open github.com/sk7601/ofradr-o/actions manually.",
+                      L"Update unavailable", MB_OK | MB_ICONWARNING);
+              }} else {{
+                  MessageBoxW(nullptr,
+                      L"GitHub Actions was opened in your browser. Select a successful build, download its artifact, and verify it before use. No installer was executed.",
+                      L"Manual update", MB_OK | MB_ICONINFORMATION);
+              }}
+          {return_statement}}}'''
+              revised = code[:m.start()] + replacement + code[end:]
+              if '#include <shellapi.h>' not in revised:
+                  revised = '#include <shellapi.h>\n' + revised
+              SOURCE.write_text(revised, encoding='utf-8')
+              print('Patched updater safely in', SOURCE)
+              print('Changes: the button opens your GitHub build artifacts instead of an elevated remote script.')
+          
+          
+          if __name__ == '__main__':
+              main()
+          '@ | Set-Content -Path patch_updater.py -Encoding utf8
+          python patch_updater.py
+
+      - name: Restore dependencies
+        shell: pwsh
+        run: nuget restore examples\imgui_examples.sln -PackagesDirectory examples\packages
+
+      - name: Build Release x64
+        shell: pwsh
+        run: msbuild examples\imgui_examples.sln /m /p:Configuration=Release /p:Platform=x64
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-Release-Safe-Update
+          path: examples/example_win32_directx11/Release/hope.exe
+          if-no-files-found: error

@@ -67,68 +67,15 @@
 #include <urlmon.h>
 
 // WEBVIEW2 BROWSER
+
 #include <wrl.h>
 #include <wrl/client.h>
-namespace Microsoft { namespace WRL {
-    template <typename MemberPtr> struct MemberFnTraits;
-    template <typename R, typename C, typename... Args>
-    struct MemberFnTraits<R (STDMETHODCALLTYPE C::*)(Args...)> {
-        using Sig = R(Args...);
-    };
+#include <wrl/event.h>
 
-    template <typename TInterface, typename F, typename Sig> struct CallbackImplHelper;
-
-    template <typename TInterface, typename F, typename... Args>
-    struct CallbackImplHelper<TInterface, F, HRESULT(Args...)> : public TInterface {
-        F fn;
-        ULONG ref = 1;
-        CallbackImplHelper(F&& f) : fn(std::forward<F>(f)) {}
-        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
-            if (!ppv) return E_POINTER;
-            if (riid == __uuidof(IUnknown) || riid == __uuidof(TInterface)) {
-                *ppv = static_cast<TInterface*>(this);
-                AddRef();
-                return S_OK;
-            }
-            *ppv = nullptr;
-            return E_NOINTERFACE;
-        }
-        ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&ref); }
-        ULONG STDMETHODCALLTYPE Release() override {
-            ULONG r = InterlockedDecrement(&ref);
-            if (r == 0) delete this;
-            return r;
-        }
-        HRESULT STDMETHODCALLTYPE Invoke(Args... args) override {
-            return fn(args...);
-        }
-    };
-
-    template <typename TInterface, typename F>
-    class CallbackImpl : public CallbackImplHelper<TInterface, F, typename MemberFnTraits<decltype(&TInterface::Invoke)>::Sig> {
-    public:
-        using Base = CallbackImplHelper<TInterface, F, typename MemberFnTraits<decltype(&TInterface::Invoke)>::Sig>;
-        CallbackImpl(F&& f) : Base(std::forward<F>(f)) {}
-    };
-
-    template <typename TInterface, typename F>
-    ComPtr<TInterface> Callback(F&& f) {
-        return ComPtr<TInterface>(new CallbackImpl<TInterface, F>(std::forward<F>(f)));
-    }
-}}
 using namespace Microsoft::WRL;
+
 #include "WebView2.h"
 
-#define DEFINE_UUIDOF(T, IID_VAL) \
-    template<> inline const GUID& __mingw_uuidof<T>() { return IID_VAL; }
-
-DEFINE_UUIDOF(ICoreWebView2Controller2, IID_ICoreWebView2Controller2)
-DEFINE_UUIDOF(ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler, IID_ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler)
-DEFINE_UUIDOF(ICoreWebView2CreateCoreWebView2ControllerCompletedHandler, IID_ICoreWebView2CreateCoreWebView2ControllerCompletedHandler)
-DEFINE_UUIDOF(ICoreWebView2NavigationCompletedEventHandler, IID_ICoreWebView2NavigationCompletedEventHandler)
-DEFINE_UUIDOF(ICoreWebView2NavigationStartingEventHandler, IID_ICoreWebView2NavigationStartingEventHandler)
-DEFINE_UUIDOF(ICoreWebView2DocumentTitleChangedEventHandler, IID_ICoreWebView2DocumentTitleChangedEventHandler)
-DEFINE_UUIDOF(ICoreWebView2SourceChangedEventHandler, IID_ICoreWebView2SourceChangedEventHandler)
 
 // JSON LIBRARY
 #include "nlohmann/json.hpp"
